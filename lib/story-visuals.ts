@@ -16,13 +16,20 @@ const characterMap: Record<string, string> = {
   proud: '/images/characters/proud.svg',
 };
 
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
+function withBasePath(urlPath: string) {
+  if (!basePath) return urlPath;
+  return `${basePath}${urlPath}`;
+}
+
 export function backgroundFromTag(tag: string) {
-  return backgroundMap[tag] || '/images/bg/default.svg';
+  return withBasePath(backgroundMap[tag] || '/images/bg/default.svg');
 }
 
 export function characterFromScene(index: number, total: number) {
-  if (index === 0) return characterMap.thinking;
-  if (index < Math.max(1, total - 2)) return characterMap.happy;
-  if (index === total - 1) return characterMap.proud;
-  return characterMap.brave;
+  if (index === 0) return withBasePath(characterMap.thinking);
+  if (index < Math.max(1, total - 2)) return withBasePath(characterMap.happy);
+  if (index === total - 1) return withBasePath(characterMap.proud);
+  return withBasePath(characterMap.brave);
 }

@@ -12,6 +12,7 @@ import {
   TOPIC_OPTIONS,
 } from '../lib/story-types';
 import { backgroundFromTag, characterFromScene } from '../lib/story-visuals';
+import { buildFallbackContinuation, buildFallbackIntroStory } from '../lib/story-utils';
 
 type ViewState = 'form' | 'reader' | 'choice' | 'ending';
 
@@ -70,6 +71,7 @@ function parseContinuationResponse(data: unknown) {
 }
 
 export function FairytaleStudio() {
+  const isStaticMode = process.env.NEXT_PUBLIC_STATIC_MODE === 'true';
   const [view, setView] = React.useState<ViewState>('form');
   const [childName, setChildName] = React.useState('');
   const [selectedTopic, setSelectedTopic] = React.useState(TOPIC_OPTIONS[0].value);
@@ -89,7 +91,7 @@ export function FairytaleStudio() {
   const topic = customTopic.trim() || selectedTopic;
   const currentScene = story?.scenes[sceneIndex];
   const backgroundSrc = backgroundFromTag(currentScene?.bg_tag || 'room');
-  const characterSrc = story ? characterFromScene(sceneIndex, story.scenes.length) : '/images/characters/happy.svg';
+  const characterSrc = characterFromScene(story ? sceneIndex : 0, story?.scenes.length || 1);
 
   async function handleCreateStory(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -108,6 +110,17 @@ export function FairytaleStudio() {
     setIsGenerating(true);
 
     try {
+      if (isStaticMode) {
+        const fallback = buildFallbackIntroStory(childName.trim(), topic.trim(), settings.style);
+        setStory(fallback);
+        setSceneIndex(0);
+        setSelectedChoice('');
+        setEndingMessage('');
+        setLastMeta({ source: 'client-static-fallback', provider: 'local', model: 'fallback' });
+        setView('reader');
+        return;
+      }
+
       const response = await fetch('/api/story', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,6 +162,17 @@ export function FairytaleStudio() {
     setError('');
 
     try {
+      if (isStaticMode) {
+        const continuation = buildFallbackContinuation(story, choice.button_text, settings.style);
+        const mergedScenes = [...story.scenes, ...continuation.continuation_scenes];
+        setStory({ ...story, scenes: mergedScenes });
+        setEndingMessage(continuation.ending_message);
+        setSceneIndex(story.scenes.length);
+        setLastMeta({ source: 'client-static-fallback', provider: 'local', model: 'fallback' });
+        setView('reader');
+        return;
+      }
+
       const response = await fetch('/api/story/continue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
