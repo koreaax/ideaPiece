@@ -261,7 +261,7 @@ export function FairytaleStudio() {
                 <input
                   value={childName}
                   onChange={(event) => setChildName(event.target.value)}
-                  placeholder="예: 민지"
+                  placeholder="예: 하영"
                   className="h-16 w-full rounded-3xl border-2 border-slate-200 bg-[var(--yellow-soft)] px-5 text-xl outline-none transition focus:border-[var(--mint-deep)]"
                 />
               </div>

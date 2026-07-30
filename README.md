@@ -31,6 +31,18 @@ README만 보이는 경우는 보통 Pages 소스가 앱 빌드 결과물이 아
 1. `npm run build:pages`
 2. `out` 폴더가 생성되면 정적 배포 준비 완료
 
+## Vercel 배포
+Vercel의 서버리스 환경을 사용하면 API 라우트(`app/api`)를 포함한 모든 기능을 그대로 배포할 수 있습니다.
+
+1. Vercel 대시보드에서 **New Project > Import Git Repository**로 이 저장소를 연결합니다.
+2. Framework Preset은 **Next.js**로 자동 인식됩니다. Build Command와 Output Directory는 기본값을 그대로 둡니다.
+3. **주의**: Vercel 프로젝트 환경 변수에 `GITHUB_PAGES`를 설정하지 마세요. 이 값이 설정되면 정적 export 모드로 빌드되어 API 라우트가 동작하지 않습니다.
+4. Vercel 프로젝트 Settings > Environment Variables에 아래 값을 필요에 따라 설정합니다 (`.env.example` 참고):
+   - `LLM_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `DEFAULT_TEMPERATURE`, `DEFAULT_STYLE`
+5. 키를 설정하지 않아도 fallback 동화로 정상 동작합니다.
+6. 무료 티어(Hobby)의 서버리스 함수 기본 실행 시간(300초)은 LLM 응답 대기에 충분합니다.
+7. 배포가 끝나면 `https://<project-name>.vercel.app` 도메인으로 바로 접속할 수 있습니다.
+
 ## 환경 변수
 `.env.local` 파일을 만들고 아래를 채우세요.
 
