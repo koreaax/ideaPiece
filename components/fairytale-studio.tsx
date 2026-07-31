@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { BookOpen, ChevronRight, Library, Loader2, Play, RefreshCw, Sparkles, Trash2, Volume2, Wand2, X } from 'lucide-react';
+import { BookOpen, ChevronRight, Download, Library, Loader2, Pause, Play, RefreshCw, Sparkles, Trash2, Volume2, Wand2, X } from 'lucide-react';
 import {
   ContinuationPayload,
   DEFAULT_SETTINGS,
@@ -11,11 +11,18 @@ import {
   STYLE_LABELS,
   TOPIC_OPTIONS,
 } from '../lib/story-types';
-import { backgroundFromTag, characterFromScene } from '../lib/story-visuals';
+import { backgroundFromTag, characterFromText } from '../lib/story-visuals';
 import { buildFallbackContinuation, buildFallbackIntroStory } from '../lib/story-utils';
-import { isSpeechSupported, speakText, stopSpeech } from '../lib/speech';
+import {
+  isSpeechSupported,
+  pauseSpeech,
+  resumeSpeech,
+  speakText,
+  stopSpeech,
+} from '../lib/speech';
 import { playChoiceSound, playCompleteSound, playPageTurnSound } from '../lib/sound';
 import { SavedStory, deleteSavedStory, getSavedStories, saveStory } from '../lib/story-storage';
+import InstallPrompt from './install-prompt';
 
 type ViewState = 'form' | 'reader' | 'choice' | 'ending';
 
@@ -96,6 +103,9 @@ export function FairytaleStudio() {
   const [isContinuing, setIsContinuing] = React.useState(false);
   const [error, setError] = React.useState('');
   const [isSpeaking, setIsSpeaking] = React.useState(false);
+  const [isPaused, setIsPaused] = React.useState(false);
+  const [sentences, setSentences] = React.useState<string[]>([]);
+  const [activeSentenceIndex, setActiveSentenceIndex] = React.useState(0);
   const [topicUsed, setTopicUsed] = React.useState('');
   const [showLibrary, setShowLibrary] = React.useState(false);
   const [savedStories, setSavedStories] = React.useState<SavedStory[]>([]);
@@ -104,10 +114,14 @@ export function FairytaleStudio() {
   const topic = customTopic.trim() || selectedTopic;
   const currentScene = story?.scenes[sceneIndex];
   const backgroundSrc = backgroundFromTag(currentScene?.bg_tag || 'room');
-  const characterSrc = characterFromScene(story ? sceneIndex : 0, story?.scenes.length || 1);
+  const characterSrc = characterFromText(currentScene?.text || '', story ? sceneIndex : 0, story?.scenes.length || 1);
 
   // 자동 음성 재생 + 재생 완료 후 자동 페이지 넘김
   React.useEffect(() => {
+    setIsPaused(false);
+    setSentences([]);
+    setActiveSentenceIndex(0);
+
     if (view !== 'reader' || !currentScene?.text) {
       return () => {
         stopSpeech();
@@ -116,16 +130,19 @@ export function FairytaleStudio() {
 
     const startTimer = setTimeout(() => {
       if (isSpeechSupported()) {
-        speakText(
-          currentScene.text,
-          () => setIsSpeaking(true),
-          () => {
+        speakText(currentScene.text, {
+          onStart: () => setIsSpeaking(true),
+          onSentenceStart: (index, allSentences) => {
+            setSentences(allSentences);
+            setActiveSentenceIndex(index);
+          },
+          onEnd: () => {
             setIsSpeaking(false);
             advanceTimerRef.current = setTimeout(() => {
               handleNext();
             }, 1200);
-          }
-        );
+          },
+        });
       } else {
         advanceTimerRef.current = setTimeout(() => {
           handleNext();
@@ -358,17 +375,9 @@ export function FairytaleStudio() {
               <Library className="h-4 w-4" />
               저장된 동화 {savedStories.length > 0 ? `(${savedStories.length})` : ''}
             </button>
+            <InstallPrompt />
           </div>
           <h1 className="text-3xl font-black text-slate-800 sm:text-4xl">오늘의 맞춤 동화 만들기</h1>
-          <p className="mt-2 text-sm text-slate-600 sm:text-base">
-            입력 → 동화 1~3페이지 → 분기 선택 → 자동 4~6페이지 이어쓰기
-          </p>
-
-          {lastMeta.provider ? (
-            <p className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">
-              마지막 생성: {lastMeta.provider} / {lastMeta.model || 'default'} / {lastMeta.source || 'unknown'}
-            </p>
-          ) : null}
         </header>
 
         {view === 'form' ? (
@@ -385,7 +394,7 @@ export function FairytaleStudio() {
               </div>
 
               <div>
-                <p className="mb-3 text-sm font-bold text-slate-700">오늘의 주제 선택</p>
+                <p className="mb-3 text-sm font-bold text-slate-700">오늘의 이야기</p>
                 <div className="grid grid-cols-2 gap-3">
                   {TOPIC_OPTIONS.map((item) => {
                     const active = selectedTopic === item.value;
@@ -409,11 +418,11 @@ export function FairytaleStudio() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold text-slate-700">직접 입력 (선택)</label>
+                <label className="mb-2 block text-sm font-bold text-slate-700">직접 입력 (선택사항)</label>
                 <input
                   value={customTopic}
                   onChange={(event) => setCustomTopic(event.target.value)}
-                  placeholder="예: 친구에게 미안한 마음"
+                  placeholder="예: 친구와 화해하기"
                   className="h-14 w-full rounded-3xl border-2 border-slate-200 bg-white px-5 text-base outline-none transition focus:border-[var(--peach)]"
                 />
               </div>
@@ -473,34 +482,80 @@ export function FairytaleStudio() {
               />
 
               <div className="absolute inset-x-0 bottom-0 h-[27%] bg-white/92 px-6 py-5">
-                <p className="text-xl leading-relaxed text-slate-800 sm:text-2xl">{currentScene.text}</p>
+                {sentences.length > 0 ? (
+                  <p className="text-xl leading-relaxed text-slate-800 sm:text-2xl">
+                    {sentences.map((sentence, index) => (
+                      <span
+                        key={`${index}-${sentence.slice(0, 6)}`}
+                        className={
+                          index === activeSentenceIndex
+                            ? 'rounded bg-[var(--peach)]/60 px-1 text-slate-900 transition-colors'
+                            : 'text-slate-800 transition-colors'
+                        }
+                      >
+                        {sentence}{' '}
+                      </span>
+                    ))}
+                  </p>
+                ) : (
+                  <p className="text-xl leading-relaxed text-slate-800 sm:text-2xl">{currentScene.text}</p>
+                )}
                 <p className="mt-1 text-xs font-semibold text-slate-500">아래 버튼을 눌러 다음 장면으로 이동해요.</p>
 
-                {/* 스피커 버튼: 음성 지원 여부 확인 후 렌더링 */}
+                {/* 음성 컨트롤 버튼: 다시 듣기 + 일시정지/재생 */}
                 {isSpeechSupported() && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (advanceTimerRef.current) {
-                        clearTimeout(advanceTimerRef.current);
-                        advanceTimerRef.current = null;
-                      }
-                      speakText(
-                        currentScene.text,
-                        () => setIsSpeaking(true),
-                        () => {
-                          setIsSpeaking(false);
-                          advanceTimerRef.current = setTimeout(() => {
-                            handleNext();
-                          }, 1200);
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (advanceTimerRef.current) {
+                          clearTimeout(advanceTimerRef.current);
+                          advanceTimerRef.current = null;
                         }
-                      );
-                    }}
-                    className="tap-bounce mt-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--peach)] text-slate-800 shadow-lg transition hover:bg-[var(--peach)]/90"
-                    title="다시 듣기"
-                  >
-                    <Volume2 className={`h-5 w-5 ${isSpeaking ? 'animate-pulse' : ''}`} />
-                  </button>
+                        setIsPaused(false);
+                        speakText(currentScene.text, {
+                          onStart: () => setIsSpeaking(true),
+                          onSentenceStart: (index, allSentences) => {
+                            setSentences(allSentences);
+                            setActiveSentenceIndex(index);
+                          },
+                          onEnd: () => {
+                            setIsSpeaking(false);
+                            advanceTimerRef.current = setTimeout(() => {
+                              handleNext();
+                            }, 1200);
+                          },
+                        });
+                      }}
+                      className="tap-bounce inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--peach)] text-slate-800 shadow-lg transition hover:bg-[var(--peach)]/90"
+                      title="다시 듣기"
+                    >
+                      <Volume2 className={`h-5 w-5 ${isSpeaking && !isPaused ? 'animate-pulse' : ''}`} />
+                    </button>
+
+                    {isSpeaking && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isPaused) {
+                            resumeSpeech();
+                            setIsPaused(false);
+                          } else {
+                            pauseSpeech();
+                            setIsPaused(true);
+                            if (advanceTimerRef.current) {
+                              clearTimeout(advanceTimerRef.current);
+                              advanceTimerRef.current = null;
+                            }
+                          }
+                        }}
+                        className="tap-bounce inline-flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-700 shadow-lg ring-2 ring-slate-200 transition hover:ring-[var(--mint-deep)]"
+                        title={isPaused ? '이어 듣기' : '일시정지'}
+                      >
+                        {isPaused ? <Play className="h-5 w-5" /> : <Pause className="h-5 w-5" />}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 

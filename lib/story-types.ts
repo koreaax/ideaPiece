@@ -41,12 +41,12 @@ export type TopicOption = {
 };
 
 export const TOPIC_OPTIONS: TopicOption[] = [
-  { value: '양치하기 싫어함', label: '양치하기 싫어함', emoji: '🪥' },
-  { value: '놀이터 미끄럼틀', label: '놀이터 미끄럼틀', emoji: '🛝' },
-  { value: '밥 안 먹기', label: '밥 안 먹기', emoji: '🍚' },
-  { value: '동생과 장난감 다툼', label: '장난감 다툼', emoji: '🧸' },
-  { value: '낮잠 안 자기', label: '낮잠 안 자기', emoji: '😴' },
-  { value: '유치원 첫 등원', label: '유치원 첫 등원', emoji: '🎒' },
+  { value: '양치하기 싫어요', label: '양치하기 싫어요', emoji: '🪥' },
+  { value: '미끄럼틀 놀이', label: '미끄럼틀 놀이', emoji: '🛝' },
+  { value: '밥 먹기 싫어요', label: '밥 먹기 싫어요', emoji: '🍚' },
+  { value: '장난감을 양보해요', label: '장난감을 양보해요', emoji: '🧸' },
+  { value: '낮잠이 싫어요', label: '낮잠이 싫어요', emoji: '😴' },
+  { value: '첫 유치원 등원', label: '첫 유치원 등원', emoji: '🎒' },
 ];
 
 export const STYLE_LABELS: Record<StoryStyle, string> = {

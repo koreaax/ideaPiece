@@ -1,10 +1,13 @@
 /**
  * Web Speech API 유틸 - 한국어 음성 합성
  * 100% 클라이언트 사이드, SSR 안전
+ * 문장 단위로 끊어 읽어 더 부드럽고 자연스러운 말투를 만든다.
  */
 
 let cachedVoices: SpeechSynthesisVoice[] | null = null;
 let voicesLoaded = false;
+let playbackToken = 0;
+let pausedFlag = false;
 
 /**
  * Speech Synthesis 지원 여부 확인
@@ -67,31 +70,64 @@ function loadVoices(): Promise<SpeechSynthesisVoice[]> {
 }
 
 /**
- * 한국어 음성 찾기
+ * 한국어 음성 찾기 - 가능하면 네트워크(클라우드) 음성을 우선 사용해 더 부드럽게 재생
  */
 function findKoreanVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  // 정확한 한국어 매칭 우선
-  const exactMatch = voices.find((v) => v.lang === 'ko-KR' || v.lang === 'ko');
-  if (exactMatch) return exactMatch;
+  const koreanVoices = voices.filter(
+    (v) => v.lang === 'ko-KR' || v.lang === 'ko' || v.lang.startsWith('ko')
+  );
+  if (koreanVoices.length === 0) return null;
 
-  // 한국어 포함 (보다 느슨한 매칭)
-  const koreanMatch = voices.find((v) => v.lang.startsWith('ko'));
-  if (koreanMatch) return koreanMatch;
+  // localService === false 인 음성은 보통 클라우드 기반 고품질 음성(예: Chrome의 Google 음성)
+  const cloudVoice = koreanVoices.find((v) => !v.localService);
+  if (cloudVoice) return cloudVoice;
 
-  return null;
+  return koreanVoices[0];
 }
 
 /**
+ * 긴 텍스트를 문장 단위로 분할 (마침표 기준, 구분자 유지)
+ */
+function splitIntoSentences(text: string): string[] {
+  const normalized = text.trim();
+  if (!normalized) return [];
+
+  const matches = normalized.match(/[^.!?]+[.!?]*/g);
+  if (!matches) return [normalized];
+
+  return matches.map((s) => s.trim()).filter(Boolean);
+}
+
+export type SpeakCallbacks = {
+  onStart?: () => void;
+  onEnd?: () => void;
+  /** 문장 하이라이트용: 현재 재생 중인 문장의 index와 전체 문장 배열을 전달 */
+  onSentenceStart?: (index: number, sentences: string[]) => void;
+  onPause?: () => void;
+  onResume?: () => void;
+};
+
+/**
  * 텍스트를 음성으로 읽어주기
+ * 문장 단위로 나눠 순차 재생함으로써 말투에 자연스러운 쉼을 두어 더 부드럽게 들리게 한다.
+ * 두 번째 인자로 함수(onEnd 단축형) 또는 콜백 객체(SpeakCallbacks)를 받는다.
  */
 export async function speakText(
   text: string,
-  onStart?: () => void,
-  onEnd?: () => void
+  onStartOrCallbacks?: (() => void) | SpeakCallbacks,
+  onEndArg?: () => void
 ): Promise<void> {
   if (!isSpeechSupported() || !text.trim()) {
     return;
   }
+
+  const callbacks: SpeakCallbacks =
+    typeof onStartOrCallbacks === 'function'
+      ? { onStart: onStartOrCallbacks, onEnd: onEndArg }
+      : onStartOrCallbacks || {};
+
+  const myToken = ++playbackToken;
+  pausedFlag = false;
 
   try {
     // 기존 발화 중단 (중첩 재생 방지)
@@ -100,42 +136,112 @@ export async function speakText(
     // 음성 목록 로드
     const voices = await loadVoices();
     const koreanVoice = findKoreanVoice(voices);
+    const sentences = splitIntoSentences(text);
 
-    // 음성 합성 객체 생성
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'ko-KR';
-    utterance.rate = 0.85;
-    utterance.pitch = 1.1;
-
-    if (koreanVoice) {
-      utterance.voice = koreanVoice;
+    if (sentences.length === 0) {
+      callbacks.onEnd?.();
+      return;
     }
 
-    // 콜백 연결
-    utterance.onstart = () => {
-      onStart?.();
+    let started = false;
+
+    const playSentence = (index: number) => {
+      // 다른 speakText/stopSpeech 호출로 무효화된 경우 중단
+      if (myToken !== playbackToken) return;
+
+      if (index >= sentences.length) {
+        callbacks.onEnd?.();
+        return;
+      }
+
+      callbacks.onSentenceStart?.(index, sentences);
+
+      const utterance = new SpeechSynthesisUtterance(sentences[index]);
+      utterance.lang = 'ko-KR';
+      utterance.rate = 0.85;
+      utterance.pitch = 1.1;
+
+      if (koreanVoice) {
+        utterance.voice = koreanVoice;
+      }
+
+      utterance.onstart = () => {
+        if (!started) {
+          started = true;
+          callbacks.onStart?.();
+        }
+      };
+
+      utterance.onend = () => {
+        if (myToken !== playbackToken) return;
+        // 일시정지 상태라면 다음 문장으로 넘어가지 않고 대기
+        if (pausedFlag) return;
+        // 문장 사이 짧은 쉼을 두어 더 부드럽게 이어진다
+        setTimeout(() => playSentence(index + 1), 220);
+      };
+
+      utterance.onerror = () => {
+        if (myToken !== playbackToken) return;
+        callbacks.onEnd?.(); // 에러 시에도 재생 중 상태 해제
+      };
+
+      window.speechSynthesis.speak(utterance);
     };
 
-    utterance.onend = () => {
-      onEnd?.();
-    };
-
-    utterance.onerror = () => {
-      onEnd?.(); // 에러 시에도 재생 중 상태 해제
-    };
-
-    // 재생
-    window.speechSynthesis.speak(utterance);
+    playSentence(0);
   } catch {
     // 에러 발생 시 onEnd 호출 (정리 목적)
-    onEnd?.();
+    callbacks.onEnd?.();
   }
+}
+
+/**
+ * 음성 재생 일시정지 (브라우저 pause API 사용)
+ */
+export function pauseSpeech(): void {
+  if (!isSpeechSupported()) return;
+
+  try {
+    if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+      pausedFlag = true;
+      window.speechSynthesis.pause();
+    }
+  } catch {
+    // no-op
+  }
+}
+
+/**
+ * 일시정지된 음성 재생 재개
+ */
+export function resumeSpeech(): void {
+  if (!isSpeechSupported()) return;
+
+  try {
+    if (window.speechSynthesis.paused) {
+      pausedFlag = false;
+      window.speechSynthesis.resume();
+    }
+  } catch {
+    // no-op
+  }
+}
+
+/**
+ * 현재 일시정지 상태인지 확인
+ */
+export function isSpeechPaused(): boolean {
+  if (!isSpeechSupported()) return false;
+  return window.speechSynthesis.paused;
 }
 
 /**
  * 음성 재생 중단
  */
 export function stopSpeech(): void {
+  playbackToken += 1;
+  pausedFlag = false;
+
   if (!isSpeechSupported()) {
     return;
   }
