@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Download, FileText, Music, Loader2, Lock } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { StoryPayload } from '../lib/story-types';
+import { loadKoreanFontBase64 } from '../lib/pdf-font';
 import { useSupabase } from '../contexts/supabase-context';
 
 type ExportButtonsProps = {
@@ -45,6 +46,17 @@ export default function ExportButtons({ story, onOpenPricing }: ExportButtonsPro
       // jsPDF 문서 생성 (A4 가로 모드: 297mm x 210mm)
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
+      // 한글 폰트 로드 및 등록 (실패 시 깨진 PDF를 만들지 않고 즉시 중단)
+      try {
+        const fontBase64 = await loadKoreanFontBase64();
+        doc.addFileToVFS('NotoSansKR-Regular.ttf', fontBase64);
+        doc.addFont('NotoSansKR-Regular.ttf', 'NotoSansKR', 'normal');
+        doc.setFont('NotoSansKR');
+      } catch (fontErr) {
+        console.error('[PDF Export] font load failed', fontErr);
+        throw new Error('한글 폰트를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+      }
+
       // 커버 페이지
       doc.setFillColor(254, 249, 231); // #fef9e7
       doc.rect(0, 0, 297, 210, 'F');
@@ -60,6 +72,7 @@ export default function ExportButtons({ story, onOpenPricing }: ExportButtonsPro
       // 씬 페이지 추가
       story.scenes.forEach((scene) => {
         doc.addPage('a4', 'landscape');
+        doc.setFont('NotoSansKR'); // addPage 이후에도 한글 폰트 유지 보장
         doc.setFillColor(255, 255, 255);
         doc.rect(0, 0, 297, 210, 'F');
 

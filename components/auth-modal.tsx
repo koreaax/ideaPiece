@@ -24,6 +24,18 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
   const supabase = createClient();
 
+  const handleClose = () => {
+    setIsSignUp(false);
+    setShowForgotPassword(false);
+    setEmail('');
+    setPassword('');
+    setResetEmail('');
+    setError('');
+    setMessage('');
+    setLoading(false);
+    onClose();
+  };
+
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -108,7 +120,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       <div className="relative w-full max-w-md overflow-hidden rounded-[2.5rem] border-4 border-white/80 bg-white p-6 shadow-2xl transition-all">
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute right-5 top-5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200"
         >
           <X className="h-4 w-4" />

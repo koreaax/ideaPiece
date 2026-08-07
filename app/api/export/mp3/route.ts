@@ -43,7 +43,7 @@ export async function POST(request: Request) {
         model: 'tts-1',
         input: text,
         voice: 'alloy', // 따뜻하고 안정적인 목소리
-        speed: 0.95,
+        speed: 0.8, // 느린 읽기 속도 (아이 대상 동화이므로 천천히)
       }),
     });
 
