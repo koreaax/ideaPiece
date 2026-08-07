@@ -23,6 +23,17 @@ const PRECACHE_URLS = [
   withPrefix('/manifest.json'),
   withPrefix('/icons/icon.svg'),
   withPrefix('/offline.html'),
+  withPrefix('/images/bg/bathroom.svg'),
+  withPrefix('/images/bg/bedroom.svg'),
+  withPrefix('/images/bg/default.svg'),
+  withPrefix('/images/bg/fantasy_clouds.svg'),
+  withPrefix('/images/bg/fantasy_room.svg'),
+  withPrefix('/images/bg/forest.svg'),
+  withPrefix('/images/bg/sea.svg'),
+  withPrefix('/images/characters/brave.svg'),
+  withPrefix('/images/characters/happy.svg'),
+  withPrefix('/images/characters/proud.svg'),
+  withPrefix('/images/characters/thinking.svg'),
 ].map((url) => new Request(url, { cache: 'reload' }));
 
 // 이 경로들은 절대 캐시하지 않는다 (LLM 스토리 생성 API 등 동적 응답)

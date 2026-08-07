@@ -51,9 +51,11 @@ function styleHint(style: StoryStyle) {
 }
 
 export function extractJsonString(rawText: string) {
-  const fenced = rawText.match(/```json\\s*([\\s\\S]*?)```/i);
+  // 마크다운 ```json ... ``` 코드블록에서 JSON 추출
+  const fenced = rawText.match(/```json\s*([\s\S]*?)```/i);
   if (fenced && fenced[1]) return fenced[1].trim();
 
+  // 코드블록이 없으면 첫 번째 { ... } 범위를 JSON으로 취급
   const firstBrace = rawText.indexOf('{');
   const lastBrace = rawText.lastIndexOf('}');
   if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -220,5 +222,5 @@ export function normalizeContinuation(
 export function summarizeScenes(story: StoryPayload) {
   return story.scenes
     .map((scene) => `페이지 ${scene.page}: ${scene.text}`)
-    .join('\\n');
+    .join('\n');
 }

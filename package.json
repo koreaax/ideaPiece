@@ -9,6 +9,11 @@
     "build:pages": "node scripts/build-pages.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.2",
+    "@tosspayments/payment-sdk": "^1.9.3",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "lucide-react": "^1.27.0",
     "next": "^15.5.22",
     "react": "^19.1.1",

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { BookOpen, ChevronRight, Download, Library, Loader2, Pause, Play, RefreshCw, Sparkles, Trash2, Volume2, Wand2, X } from 'lucide-react';
+import { BookOpen, CalendarCheck, ChevronRight, Crown, Download, Library, Loader2, Lock, LogOut, Pause, Play, RefreshCw, Sparkles, Trash2, User, Volume2, Wand2, WifiOff, X, Music2 } from 'lucide-react';
 import {
   ContinuationPayload,
   DEFAULT_SETTINGS,
@@ -11,18 +11,31 @@ import {
   STYLE_LABELS,
   TOPIC_OPTIONS,
 } from '../lib/story-types';
-import { backgroundFromTag, characterFromText } from '../lib/story-visuals';
+import { backgroundFromTag, characterFromText, CHARACTER_OPTIONS, CharacterMood } from '../lib/story-visuals';
 import { buildFallbackContinuation, buildFallbackIntroStory } from '../lib/story-utils';
 import {
+  getAvailableKoreanVoices,
+  getSpeechPreferences,
   isSpeechSupported,
   pauseSpeech,
   resumeSpeech,
+  saveSpeechPreferences,
   speakText,
+  SpeechPreferences,
   stopSpeech,
 } from '../lib/speech';
-import { playChoiceSound, playCompleteSound, playPageTurnSound } from '../lib/sound';
-import { SavedStory, deleteSavedStory, getSavedStories, saveStory } from '../lib/story-storage';
+import { playChoiceSound, playCompleteSound, playPageTurnSound, startAmbientMusic, stopAmbientMusic, getAmbientMusicPreference, saveAmbientMusicPreference } from '../lib/sound';
+import { SavedStory, deleteSavedStory, getCompletionStats, getSavedStories, logCompletion, saveStory } from '../lib/story-storage';
+import { Badge, BADGE_DEFINITIONS, getEarnedBadges, getNewlyEarnedBadges, markBadgesAsSeen } from '../lib/badges';
+import { addUsageMs, hasReachedDailyLimit } from '../lib/parent-mode';
+import { getCharacterPreference, saveCharacterPreference } from '../lib/character-preference';
+import { useSupabase } from '../contexts/supabase-context';
+import ParentGate from './parent-gate';
+import ParentSettingsPanel from './parent-settings';
 import InstallPrompt from './install-prompt';
+import AuthModal from './auth-modal';
+import PricingModal from './pricing-modal';
+import ExportButtons from './export-buttons';
 
 type ViewState = 'form' | 'reader' | 'choice' | 'ending';
 
@@ -86,6 +99,7 @@ export function FairytaleStudio() {
   const [childName, setChildName] = React.useState('');
   const [selectedTopic, setSelectedTopic] = React.useState(TOPIC_OPTIONS[0].value);
   const [customTopic, setCustomTopic] = React.useState('');
+  const [selectedCharacter, setSelectedCharacter] = React.useState<CharacterMood | null>(() => getCharacterPreference());
   const [story, setStory] = React.useState<StoryPayload | null>(null);
   const [sceneIndex, setSceneIndex] = React.useState(0);
   const [selectedChoice, setSelectedChoice] = React.useState('');
@@ -109,12 +123,65 @@ export function FairytaleStudio() {
   const [topicUsed, setTopicUsed] = React.useState('');
   const [showLibrary, setShowLibrary] = React.useState(false);
   const [savedStories, setSavedStories] = React.useState<SavedStory[]>([]);
+  const [completionStats, setCompletionStats] = React.useState<{ thisWeekCount: number; totalCount: number }>({
+    thisWeekCount: 0,
+    totalCount: 0,
+  });
+  const [showParentGate, setShowParentGate] = React.useState(false);
+  const [showParentSettings, setShowParentSettings] = React.useState(false);
+  const [speechPrefs, setSpeechPrefs] = React.useState<SpeechPreferences>(() => getSpeechPreferences());
+  const [availableVoices, setAvailableVoices] = React.useState<SpeechSynthesisVoice[]>([]);
+  const [newBadges, setNewBadges] = React.useState<Badge[]>([]);
+  const [earnedBadges, setEarnedBadges] = React.useState<Badge[]>([]);
+  const [ambientMusicEnabled, setAmbientMusicEnabled] = React.useState<boolean>(() => getAmbientMusicPreference());
+  const [isOffline, setIsOffline] = React.useState(false);
+  const { user, profile, signOut } = useSupabase();
+  const [showAuthModal, setShowAuthModal] = React.useState(false);
+  const [showPricingModal, setShowPricingModal] = React.useState(false);
+  const isPremiumUser = profile?.plan === 'premium';
+  const isAdminUser = profile?.role === 'admin';
+
   const advanceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readerEnteredAtRef = React.useRef<number | null>(null);
 
   const topic = customTopic.trim() || selectedTopic;
   const currentScene = story?.scenes[sceneIndex];
   const backgroundSrc = backgroundFromTag(currentScene?.bg_tag || 'room');
-  const characterSrc = characterFromText(currentScene?.text || '', story ? sceneIndex : 0, story?.scenes.length || 1);
+  const characterSrc = characterFromText(currentScene?.text || '', story ? sceneIndex : 0, story?.scenes.length || 1, selectedCharacter);
+
+  // handleNext: useEffect가 의존하므로 useEffect 선언 전에 정의
+  const handleNext = React.useCallback(() => {
+    if (!story) return;
+
+    stopSpeech();
+
+    if (sceneIndex < story.scenes.length - 1) {
+      playPageTurnSound();
+      setSceneIndex((value) => value + 1);
+      return;
+    }
+
+    if (story.scenes.length <= 3) {
+      playPageTurnSound();
+      setView('choice');
+      return;
+    }
+
+    playCompleteSound();
+    saveStory({
+      childName: story.child_name,
+      topic: topicUsed || story.child_name,
+      scenes: story.scenes,
+      endingMessage,
+      selectedChoice,
+    });
+    setSavedStories(getSavedStories());
+    logCompletion(topicUsed || story.child_name);
+    const fresh = getNewlyEarnedBadges();
+    setNewBadges(fresh);
+    markBadgesAsSeen();
+    setView('ending');
+  }, [story, sceneIndex, topicUsed, endingMessage, selectedChoice]);
 
   // 자동 음성 재생 + 재생 완료 후 자동 페이지 넘김
   React.useEffect(() => {
@@ -158,7 +225,7 @@ export function FairytaleStudio() {
       }
       stopSpeech();
     };
-  }, [view, sceneIndex, story]);
+  }, [view, sceneIndex, story, handleNext]);
 
   // 컴포넌트 언마운트 시 음성 중단
   React.useEffect(() => {
@@ -172,9 +239,89 @@ export function FairytaleStudio() {
     setSavedStories(getSavedStories());
   }, []);
 
+  // 온라인/오프라인 상태 추적: 저장된 동화를 오프라인에서도 다시 읽을 수 있음을 안내하기 위함
+  React.useEffect(() => {
+    setIsOffline(!navigator.onLine);
+
+    function handleOnline() {
+      setIsOffline(false);
+    }
+    function handleOffline() {
+      setIsOffline(true);
+    }
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // 사용 가능한 한국어 음성 목록 로드
+  React.useEffect(() => {
+    let cancelled = false;
+    getAvailableKoreanVoices().then((voices) => {
+      if (!cancelled) setAvailableVoices(voices);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // reader 화면 사용 시간 추적: view 진입/이탈, 탭 가시성 변화 시점에 델타를 누적치에 더함 (폴링 없음)
+  React.useEffect(() => {
+    function flushElapsed() {
+      const startedAt = readerEnteredAtRef.current;
+      if (startedAt === null) return;
+      const delta = Date.now() - startedAt;
+      readerEnteredAtRef.current = null;
+      addUsageMs(delta);
+    }
+
+    if (view === 'reader') {
+      readerEnteredAtRef.current = Date.now();
+    } else {
+      flushElapsed();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        flushElapsed();
+      } else if (view === 'reader') {
+        readerEnteredAtRef.current = Date.now();
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      flushElapsed();
+    };
+  }, [view]);
+
+  // 배경음악 제어: view === 'reader' && ambientMusicEnabled이면 시작, 아니면 정지
+  React.useEffect(() => {
+    if (view === 'reader' && ambientMusicEnabled) {
+      startAmbientMusic();
+    } else {
+      stopAmbientMusic();
+    }
+
+    return () => {
+      stopAmbientMusic();
+    };
+  }, [view, ambientMusicEnabled]);
+
   async function handleCreateStory(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
+
+    if (hasReachedDailyLimit()) {
+      setError('오늘은 여기까지! 내일 또 만나요 🌙');
+      return;
+    }
 
     if (!childName.trim()) {
       setError('아이 이름을 먼저 입력해 주세요.');
@@ -213,7 +360,11 @@ export function FairytaleStudio() {
       });
 
       if (!response.ok) {
-        throw new Error('초기 동화 생성에 실패했어요.');
+        const errJson = await response.json().catch(() => ({}));
+        if (errJson.isLimitReached) {
+          setShowPricingModal(true);
+        }
+        throw new Error(errJson.error || '초기 동화 생성에 실패했어요.');
       }
 
       const parsed = parseInitialResponse(await response.json());
@@ -290,34 +441,6 @@ export function FairytaleStudio() {
     }
   }
 
-  function handleNext() {
-    if (!story) return;
-
-    stopSpeech();
-
-    if (sceneIndex < story.scenes.length - 1) {
-      playPageTurnSound();
-      setSceneIndex((value) => value + 1);
-      return;
-    }
-
-    if (story.scenes.length <= 3) {
-      playPageTurnSound();
-      setView('choice');
-      return;
-    }
-
-    playCompleteSound();
-    saveStory({
-      childName: story.child_name,
-      topic: topicUsed || story.child_name,
-      scenes: story.scenes,
-      endingMessage,
-      selectedChoice,
-    });
-    setSavedStories(getSavedStories());
-    setView('ending');
-  }
 
   function handleRestart() {
     stopSpeech();
@@ -333,7 +456,10 @@ export function FairytaleStudio() {
 
   function handleOpenLibrary() {
     setSavedStories(getSavedStories());
+    setCompletionStats(getCompletionStats());
+    setEarnedBadges(getEarnedBadges());
     setShowLibrary(true);
+
   }
 
   function handleDeleteSaved(id: string) {
@@ -358,6 +484,15 @@ export function FairytaleStudio() {
     setView('reader');
   }
 
+  function handleOpenParentGate() {
+    setShowParentGate(true);
+  }
+
+  function handleParentGateSuccess() {
+    setShowParentGate(false);
+    setShowParentSettings(true);
+  }
+
   return (
     <main className="min-h-screen bg-[var(--bg-main)] px-4 py-6 sm:px-6">
       <div className="mx-auto w-full max-w-4xl">
@@ -367,15 +502,67 @@ export function FairytaleStudio() {
               <Sparkles className="h-4 w-4" />
               만 3세 인터랙티브 동화
             </div>
-            <button
-              type="button"
-              onClick={handleOpenLibrary}
-              className="tap-bounce inline-flex items-center gap-1 rounded-full border-2 border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-[var(--mint-deep)]"
-            >
-              <Library className="h-4 w-4" />
-              저장된 동화 {savedStories.length > 0 ? `(${savedStories.length})` : ''}
-            </button>
-            <InstallPrompt />
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPricingModal(true)}
+                className={`tap-bounce inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-black transition shadow-sm ${
+                  isAdminUser
+                    ? 'bg-indigo-100 text-indigo-900 border-2 border-indigo-300'
+                    : isPremiumUser
+                      ? 'bg-amber-100 text-amber-900 border-2 border-amber-300'
+                      : 'bg-gradient-to-r from-amber-400 to-amber-500 text-white hover:brightness-105'
+                }`}
+              >
+                <Crown className={`h-4 w-4 fill-current ${isAdminUser ? 'text-indigo-300' : 'text-amber-200'}`} />
+                {isAdminUser ? '관리자 👑' : isPremiumUser ? '프리미엄 👑' : '멤버십 구독하기'}
+              </button>
+
+              {user ? (
+                <div className="inline-flex items-center gap-1">
+                  <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+                    <User className="inline h-3.5 w-3.5 mr-1" />
+                    {user.email?.split('@')[0]}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => signOut()}
+                    className="tap-bounce rounded-full border border-slate-200 bg-white p-2 text-xs font-bold text-slate-500 hover:bg-slate-100"
+                    title="로그아웃"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(true)}
+                  className="tap-bounce inline-flex items-center gap-1 rounded-full border-2 border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-[var(--mint-deep)]"
+                >
+                  <User className="h-3.5 w-3.5" />
+                  로그인 / 가입
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleOpenLibrary}
+                className="tap-bounce inline-flex items-center gap-1 rounded-full border-2 border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-[var(--mint-deep)]"
+              >
+                <Library className="h-4 w-4" />
+                저장된 동화 {savedStories.length > 0 ? `(${savedStories.length})` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenParentGate}
+                className="tap-bounce inline-flex items-center gap-1 rounded-full border-2 border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-[var(--peach)]"
+              >
+                <Lock className="h-4 w-4" />
+                부모 설정
+              </button>
+              <InstallPrompt />
+            </div>
           </div>
           <h1 className="text-3xl font-black text-slate-800 sm:text-4xl">오늘의 맞춤 동화 만들기</h1>
         </header>
@@ -427,6 +614,48 @@ export function FairytaleStudio() {
                 />
               </div>
 
+              <div>
+                <p className="mb-3 text-sm font-bold text-slate-700">캐릭터 선택</p>
+                <div className="grid grid-cols-3 gap-3">
+                  {CHARACTER_OPTIONS.map((item) => {
+                    const active = selectedCharacter === item.mood;
+                    return (
+                      <button
+                        key={item.mood}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCharacter(item.mood);
+                          saveCharacterPreference(item.mood);
+                        }}
+                        className={`tap-bounce min-h-24 rounded-3xl border-2 px-3 py-4 text-left ${
+                          active
+                            ? 'border-[var(--mint-deep)] bg-[var(--mint)]/70 shadow-lg'
+                            : 'border-slate-200 bg-white hover:border-[var(--mint)]'
+                        }`}
+                      >
+                        <div className="text-3xl">{item.emoji}</div>
+                        <div className="mt-2 text-xs font-semibold text-slate-700">{item.label}</div>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCharacter(null);
+                      saveCharacterPreference(null);
+                    }}
+                    className={`tap-bounce min-h-24 rounded-3xl border-2 px-3 py-4 text-left ${
+                      selectedCharacter === null
+                        ? 'border-[var(--mint-deep)] bg-[var(--mint)]/70 shadow-lg'
+                        : 'border-slate-200 bg-white hover:border-[var(--mint)]'
+                    }`}
+                  >
+                    <div className="text-3xl">✨</div>
+                    <div className="mt-2 text-xs font-semibold text-slate-700">자동 선택</div>
+                  </button>
+                </div>
+              </div>
+
               <div className="rounded-3xl border-2 border-slate-100 bg-slate-50 p-4">
                 <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-700">
                   <Wand2 className="h-4 w-4" />
@@ -450,6 +679,62 @@ export function FairytaleStudio() {
                   </select>
                 </label>
               </div>
+
+              {availableVoices.length > 0 ? (
+                <div className="rounded-3xl border-2 border-slate-100 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-700">
+                    <Volume2 className="h-4 w-4" />
+                    목소리 & 속도 설정
+                  </div>
+
+                  <label className="text-xs font-semibold text-slate-600">
+                    목소리
+                    <select
+                      value={speechPrefs.voiceURI ?? ''}
+                      onChange={(event) => {
+                        const nextPrefs: SpeechPreferences = {
+                          ...speechPrefs,
+                          voiceURI: event.target.value || null,
+                        };
+                        setSpeechPrefs(nextPrefs);
+                        saveSpeechPreferences(nextPrefs);
+                      }}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"
+                    >
+                      <option value="">자동 선택</option>
+                      {availableVoices.map((voice) => (
+                        <option key={voice.voiceURI} value={voice.voiceURI}>
+                          {voice.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="mt-3 block text-xs font-semibold text-slate-600">
+                    읽어주는 속도 · {speechPrefs.rate.toFixed(2)}배
+                    <input
+                      type="range"
+                      min={0.6}
+                      max={1.2}
+                      step={0.05}
+                      value={speechPrefs.rate}
+                      onChange={(event) => {
+                        const nextPrefs: SpeechPreferences = {
+                          ...speechPrefs,
+                          rate: Number(event.target.value),
+                        };
+                        setSpeechPrefs(nextPrefs);
+                        saveSpeechPreferences(nextPrefs);
+                      }}
+                      className="mt-2 w-full accent-[var(--mint-deep)]"
+                    />
+                  </label>
+                </div>
+              ) : (
+                <p className="rounded-3xl border-2 border-slate-100 bg-slate-50 p-4 text-xs text-slate-500">
+                  음성 옵션을 사용할 수 없어요
+                </p>
+              )}
 
               {error ? <p className="rounded-xl bg-rose-100 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
 
@@ -557,6 +842,31 @@ export function FairytaleStudio() {
                     )}
                   </div>
                 )}
+
+                {/* 배경음악 토글 버튼 */}
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !ambientMusicEnabled;
+                      setAmbientMusicEnabled(next);
+                      saveAmbientMusicPreference(next);
+                      if (next) {
+                        startAmbientMusic();
+                      } else {
+                        stopAmbientMusic();
+                      }
+                    }}
+                    className={`tap-bounce inline-flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition ${
+                      ambientMusicEnabled
+                        ? 'bg-[var(--mint-deep)] text-white hover:brightness-90'
+                        : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                    }`}
+                    title={ambientMusicEnabled ? '배경음악 끄기' : '배경음악 켜기'}
+                  >
+                    <Music2 className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
 
               <button
@@ -607,6 +917,27 @@ export function FairytaleStudio() {
             <p className="mt-3 text-lg text-slate-700">선택한 길: {selectedChoice || '모험의 길'}</p>
             <p className="mt-2 text-base text-slate-700">{endingMessage || '오늘의 모험을 끝까지 해냈어요!'}</p>
 
+            {newBadges.length > 0 ? (
+              <div className="mt-6 rounded-2xl bg-gradient-to-br from-[var(--peach)]/40 to-[var(--mint)]/40 p-5">
+                <p className="text-lg font-black text-slate-800">🎉 새 배지를 획득했어요!</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-3">
+                  {newBadges.map((badge) => (
+                    <div
+                      key={badge.id}
+                      className="animate-float rounded-xl border-3 border-white/80 bg-white/90 px-4 py-3 text-center shadow-md"
+                    >
+                      <div className="text-3xl">{badge.emoji}</div>
+                      <p className="mt-1 text-xs font-bold text-slate-700">{badge.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {story ? (
+              <ExportButtons story={story} onOpenPricing={() => setShowPricingModal(true)} />
+            ) : null}
+
             <button
               type="button"
               onClick={handleRestart}
@@ -633,6 +964,45 @@ export function FairytaleStudio() {
                 >
                   <X className="h-4 w-4" />
                 </button>
+              </div>
+
+              <div className="mb-4 grid grid-cols-2 gap-3 rounded-2xl bg-[var(--mint)]/60 p-4">
+                <div className="flex flex-col items-center gap-1 text-center">
+                  <CalendarCheck className="h-5 w-5 text-[var(--mint-deep)]" />
+                  <span className="text-2xl font-black text-slate-800">{completionStats.thisWeekCount}편</span>
+                  <span className="text-xs font-semibold text-slate-600">이번 주 읽었어요</span>
+                </div>
+                <div className="flex flex-col items-center gap-1 border-l border-white/70 text-center">
+                  <BookOpen className="h-5 w-5 text-[var(--mint-deep)]" />
+                  <span className="text-2xl font-black text-slate-800">{completionStats.totalCount}편</span>
+                  <span className="text-xs font-semibold text-slate-600">누적 완독</span>
+                </div>
+              </div>
+
+              {/* 배지 컬렉션 섹션 */}
+              <div className="mb-4 rounded-2xl bg-gradient-to-br from-yellow-50 to-amber-50 p-4">
+                <h3 className="text-sm font-black text-slate-800">배지 컬렉션 🏅</h3>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {BADGE_DEFINITIONS.map((badge) => {
+                    const isEarned = earnedBadges.some((b) => b.id === badge.id);
+                    return (
+                      <div
+                        key={badge.id}
+                        className={`flex flex-col items-center gap-1 rounded-lg border-2 p-3 text-center transition ${
+                          isEarned
+                            ? 'border-amber-300 bg-white/80'
+                            : 'border-slate-200 bg-slate-50 opacity-50'
+                        }`}
+                      >
+                        <span className={isEarned ? 'text-2xl' : 'text-2xl grayscale'}>{badge.emoji}</span>
+                        <p className="text-xs font-semibold text-slate-700">{badge.label}</p>
+                        {!isEarned && (
+                          <p className="mt-1 text-xs text-slate-500">{badge.threshold}편 읽으면</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {savedStories.length === 0 ? (
@@ -684,6 +1054,22 @@ export function FairytaleStudio() {
             </div>
           </div>
         ) : null}
+
+        {showParentGate ? (
+          <ParentGate onSuccess={handleParentGateSuccess} onClose={() => setShowParentGate(false)} />
+        ) : null}
+
+        {showParentSettings ? (
+          <ParentSettingsPanel onClose={() => setShowParentSettings(false)} />
+        ) : null}
+
+        {/* 인증 및 결제 모달 */}
+        <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+        <PricingModal
+          isOpen={showPricingModal}
+          onClose={() => setShowPricingModal(false)}
+          onOpenAuth={() => setShowAuthModal(true)}
+        />
       </div>
     </main>
   );

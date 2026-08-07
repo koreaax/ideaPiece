@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import SwRegister from '../components/sw-register';
+import ReminderScheduler from '../components/reminder-scheduler';
 
 export const metadata: Metadata = {
   title: 'Fairytale IdeaPiece',
@@ -23,12 +24,17 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+import { SupabaseProvider } from '../contexts/supabase-context';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
       <body>
-        {children}
-        <SwRegister />
+        <SupabaseProvider>
+          {children}
+          <SwRegister />
+          <ReminderScheduler />
+        </SupabaseProvider>
       </body>
     </html>
   );

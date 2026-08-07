@@ -125,3 +125,74 @@ export function clearSavedStories(): void {
     // 조용히 무시
   }
 }
+
+const COMPLETION_LOG_KEY = 'ideapiece:completion-log';
+const MAX_COMPLETION_LOG = 200;
+
+export type CompletionLogEntry = {
+  date: string; // 'YYYY-MM-DD'
+  topic: string;
+};
+
+function isValidCompletionLogEntry(value: unknown): value is CompletionLogEntry {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.date === 'string' && typeof item.topic === 'string';
+}
+
+function completionTodayKey(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getCompletionLog(): CompletionLogEntry[] {
+  if (!isStorageSupported()) return [];
+  try {
+    const raw = window.localStorage.getItem(COMPLETION_LOG_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidCompletionLogEntry);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 동화 완독 시점(엔딩 도달)에 호출. 오늘 날짜로 완독 기록 1건 추가.
+ * 저장 개수가 MAX_COMPLETION_LOG를 넘으면 오래된 것부터 제거.
+ */
+export function logCompletion(topic: string): void {
+  if (!isStorageSupported()) return;
+  try {
+    const existing = getCompletionLog();
+    const entry: CompletionLogEntry = { date: completionTodayKey(), topic };
+    const updated = [...existing, entry].slice(-MAX_COMPLETION_LOG);
+    window.localStorage.setItem(COMPLETION_LOG_KEY, JSON.stringify(updated));
+  } catch {
+    // 조용히 무시
+  }
+}
+
+/**
+ * 완독 통계 조회: 이번 주(오늘 기준 최근 7일, 오늘 포함) 완독 수와 전체 누적 완독 수
+ */
+export function getCompletionStats(): { thisWeekCount: number; totalCount: number } {
+  const log = getCompletionLog();
+  const totalCount = log.length;
+
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+
+  const thisWeekCount = log.filter((entry) => {
+    const [year, month, day] = entry.date.split('-').map(Number);
+    if (!year || !month || !day) return false;
+    const entryDate = new Date(year, month - 1, day);
+    return entryDate >= sevenDaysAgo;
+  }).length;
+
+  return { thisWeekCount, totalCount };
+}

@@ -16,7 +16,18 @@ const characterMap = {
   proud: '/images/characters/proud.svg',
 } as const;
 
-type CharacterMood = keyof typeof characterMap;
+export type CharacterMood = keyof typeof characterMap;
+
+export const CHARACTER_OPTIONS: Array<{
+  mood: CharacterMood;
+  label: string;
+  emoji: string;
+}> = [
+  { mood: 'happy', label: '해피 토끼', emoji: '😊' },
+  { mood: 'thinking', label: '생각하는 부엉이', emoji: '🤔' },
+  { mood: 'brave', label: '씩씩한 사자', emoji: '🦁' },
+  { mood: 'proud', label: '뿌듯한 다람쥐', emoji: '🌟' },
+];
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
@@ -103,7 +114,11 @@ const moodKeywordRules: Array<{ mood: CharacterMood; keywords: string[] }> = [
  * 씬 텍스트에 등장하는 감정 키워드를 분석해 맥락에 맞는 캐릭터 이미지를 반환한다.
  * 매칭되는 키워드가 없으면 기존 페이지 순서 기반 로직(characterFromScene)으로 폴백한다.
  */
-export function characterFromText(text: string, index: number, total: number) {
+export function characterFromText(text: string, index: number, total: number, overrideMood?: CharacterMood | null) {
+  if (overrideMood) {
+    return withBasePath(characterMap[overrideMood]);
+  }
+
   const normalized = text || '';
 
   for (const rule of moodKeywordRules) {

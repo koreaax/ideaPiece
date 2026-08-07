@@ -9,6 +9,9 @@ let voicesLoaded = false;
 let playbackToken = 0;
 let pausedFlag = false;
 
+const SPEECH_PREFERENCES_KEY = 'ideapiece:speech-preferences';
+const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = { voiceURI: null, rate: 0.85 };
+
 /**
  * Speech Synthesis 지원 여부 확인
  */
@@ -86,6 +89,60 @@ function findKoreanVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
 }
 
 /**
+ * 사용 가능한 한국어 음성 전체 목록 반환 (음성 선택 UI용)
+ */
+export async function getAvailableKoreanVoices(): Promise<SpeechSynthesisVoice[]> {
+  const voices = await loadVoices();
+  return voices.filter(
+    (v) => v.lang === 'ko-KR' || v.lang === 'ko' || v.lang.startsWith('ko')
+  );
+}
+
+/**
+ * 사용자가 선택한 음성/속도 설정
+ */
+export type SpeechPreferences = {
+  voiceURI: string | null;
+  rate: number;
+};
+
+/**
+ * 저장된 음성 설정 조회 (없으면 기본값)
+ */
+export function getSpeechPreferences(): SpeechPreferences {
+  if (typeof window === 'undefined') return { ...DEFAULT_SPEECH_PREFERENCES };
+
+  try {
+    const raw = window.localStorage.getItem(SPEECH_PREFERENCES_KEY);
+    if (!raw) return { ...DEFAULT_SPEECH_PREFERENCES };
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_SPEECH_PREFERENCES };
+
+    const item = parsed as Record<string, unknown>;
+    const voiceURI = typeof item.voiceURI === 'string' ? item.voiceURI : null;
+    const rate = typeof item.rate === 'number' && Number.isFinite(item.rate) ? item.rate : DEFAULT_SPEECH_PREFERENCES.rate;
+
+    return { voiceURI, rate };
+  } catch {
+    return { ...DEFAULT_SPEECH_PREFERENCES };
+  }
+}
+
+/**
+ * 음성 설정 저장 (localStorage)
+ */
+export function saveSpeechPreferences(prefs: SpeechPreferences): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(SPEECH_PREFERENCES_KEY, JSON.stringify(prefs));
+  } catch {
+    // 조용히 무시
+  }
+}
+
+/**
  * 긴 텍스트를 문장 단위로 분할 (마침표 기준, 구분자 유지)
  */
 function splitIntoSentences(text: string): string[] {
@@ -135,7 +192,11 @@ export async function speakText(
 
     // 음성 목록 로드
     const voices = await loadVoices();
-    const koreanVoice = findKoreanVoice(voices);
+    const preferences = getSpeechPreferences();
+    const preferredVoice = preferences.voiceURI
+      ? voices.find((v) => v.voiceURI === preferences.voiceURI) || null
+      : null;
+    const koreanVoice = preferredVoice || findKoreanVoice(voices);
     const sentences = splitIntoSentences(text);
 
     if (sentences.length === 0) {
@@ -158,7 +219,7 @@ export async function speakText(
 
       const utterance = new SpeechSynthesisUtterance(sentences[index]);
       utterance.lang = 'ko-KR';
-      utterance.rate = 0.85;
+      utterance.rate = preferences.rate;
       utterance.pitch = 1.1;
 
       if (koreanVoice) {

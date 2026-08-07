@@ -75,5 +75,5 @@ export function createContinuationUserPrompt(story: StoryPayload, selectedChoice
     summarizeScenes(story),
     '',
     '선택지를 반영해 4~6페이지를 JSON으로 이어서 작성하세요.',
-  ].join('\\n');
+  ].join('\n');
 }
